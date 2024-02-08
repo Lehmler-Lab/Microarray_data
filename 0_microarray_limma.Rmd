@@ -1,0 +1,160 @@
+---
+title: "Counting RNAseq Differential Expression"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+The majority of Library packages are listed here. If you want to include more just install and load at the end of the list. If code isn't recognizing the function, it is likely that R didn't load the package that the function comes from.
+#load libraries every time
+
+```{r include=FALSE}
+# install.packages("devtools")
+# install.packages("BiocManager")
+# BiocManager::install("TxDb.Rnorvegicus.UCSC.rn6.refGene")
+# BiocManager::install("Rsubread")
+# BiocManager::install("DESeq2")
+# BiocManager::install("Rattus.norvegicus")
+# BiocManager::install("EnhancedVolcano")
+# BiocManager::install("topGO")
+# BiocManager::install("org.Rn.eg.db")
+# BiocManager::install("GO.db")
+# BiocManager::install("MmAgilentDesign026655.db")
+# BiocManager::install("affy")
+```
+
+
+#Load libraries
+```{r results='hide'}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(BiocManager)
+library(limma)
+library(AnnotationDbi)
+library(affy)
+library(MmAgilentDesign026655.db)
+library(statmod)        
+```
+
+Set your working directory and pull in your reference genome to compare your samples to. We will read the gene model from an Ensembl GTF file. Be sure your gene model reflects the same model used in your samples. 
+
+#***Define the Gene Model***#
+```{r}
+files<- list.files("P:/OEH/Faculty/hlehmler/research/Lehmler Group-Amanda Bullert/Nrf2/Data/", pattern = "\\.txt$", full.names = TRUE)
+files
+```
+
+```{r}
+x <- read.maimages(files, source="agilent", green.only=TRUE)
+x$targets<-c("C_WT","C_WT","C_WT","C_KO", "C_KO","C_KO","H_WT","H_WT","H_WT","H_KO", "H_KO","H_KO","B_WT","B_WT","B_WT","B_KO", "B_KO","B_KO")
+dim(x)
+x$targets<-factor(x$targets)
+treatments<-x$targets
+treatments
+summary(x$E)
+```
+
+```{r}
+x$genes$EntrezID <- mapIds(MmAgilentDesign026655.db, x$genes$ProbeName,keytype="PROBEID", column="ENTREZID")
+```
+
+
+```{r}
+x$genes$Symbol <- mapIds(MmAgilentDesign026655.db, x$genes$ProbeName,keytype="PROBEID", column="SYMBOL")
+x$targets
+```
+
+```{r}
+y <- backgroundCorrect(x, method="normexp")
+```
+
+```{r}
+y <- normalizeBetweenArrays(y, method="quantile")
+```
+
+```{r}
+Control <- y$genes$ControlType==1L #We will filter out control probes as indicated by the ControlType column
+
+NoSymbol <- is.na(y$genes$Symbol) #We will also filter out probes with no Entrez Gene Id or Symbol
+
+yfilt <- y[!Control & !NoSymbol, ] #Now we select the probes to keep in a new data object yfilt
+
+dim(yfilt)
+
+```
+
+```{r}
+#To be tidy, we remove annotation columns we no longer need
+yfilt$genes <- yfilt$genes[,c("ProbeName","Symbol","EntrezID")]
+head(yfilt$genes)
+
+```
+```{r}
+f<-factor(yfilt$targets, levels = c("B_KO", "B_WT", "C_KO", "C_WT", "H_KO", "H_WT"))
+design<-model.matrix(~0+f)
+colnames(design)<-c("B_KO", "B_WT", "C_KO", "C_WT", "H_KO", "H_WT")
+```
+
+```{r}
+contrast.matrix<- makeContrasts(B_KO-B_WT, C_KO-C_WT, H_KO-H_WT, levels = design)
+fit<-lmFit(yfilt, design)
+fit2<-contrasts.fit(fit,contrast.matrix)
+fit2<-eBayes(fit2)
+summary(decideTests(fit2, method = "global"))
+```
+```{r}
+results<-topTable(fit2, n=1000, adjust.method = "BH")
+write.csv(results, "limma_comparison_DEGs.csv")
+
+```
+
+```{r}
+g<- goana(fit2, species="Mm", geneid = "EntrezID")
+topGO(g, n=20, truncate="50")
+```
+
+
+
+
+
+
+
+
+Background correction and normalization
+```{r}
+MA<- normalizeBetweenArrays(x)
+```
+
+```{r}
+fit<-lmFit(MA)
+fit<-eBayes(fit)
+topTable(fit)
+```
+
+```{r}
+f<-factor(x$targets, levels = c("B_KO", "B_WT", "C_KO", "C_WT", "H_KO", "H_WT"))
+design<-model.matrix(~0+f)
+colnames(design)<-c("B_KO", "B_WT", "C_KO", "C_WT", "H_KO", "H_WT")
+```
+
+```{r}
+fit<-lmFit(MA,design)
+contrast.matrix<- makeContrasts(B_KO-B_WT, C_KO-C_WT, H_KO-H_WT, levels = design)
+fit2<-contrasts.fit(fit,contrast.matrix)
+fit2<-eBayes(fit2)
+fit2
+```
+
+```{r}
+topTable(fit2, coef = 1, adjust ="BH")
+```
+
+```{r}
+results<-decideTests(fit2)
+```
+
+```{r}
+vennDiagram(results)
+```
+
